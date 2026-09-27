@@ -1,0 +1,30 @@
+services:
+  web:
+    build: .
+    command: npm run start:lan
+    ports:
+      - "8787:8787"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build: .
+    command: npm run backend
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8091
+      DB_PATH: /data/openktv.db
+      MEDIA_DIR: /media
+    ports:
+      - "8091:8091"
+    volumes:
+      - ./data:/data
+      - ./media:/media
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8091/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
