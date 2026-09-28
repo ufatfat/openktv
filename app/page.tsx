@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, CircleAlert, Clock3, ListMusic, Mic2, MonitorPlay, Music2, Pause, Play, Plus, Search, SkipForward, Sparkles, Trash2, Volume2, VolumeX, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +20,9 @@ export default function Home() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const filtered = useMemo(() => ktv.songs, [ktv.songs]);
+  const songsRef = useRef(ktv.songs);
+
+  useEffect(() => { songsRef.current = ktv.songs; }, [ktv.songs]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void ktv.loadSongs(query, category === "全部" ? "" : category), 180);
@@ -45,7 +47,7 @@ export default function Home() {
       execute(input) {
         const q = typeof input === "object" && input && "query" in input ? String(input.query).toLowerCase() : "";
         if (!q) throw new Error("query 不能为空");
-        return { songs: ktv.songs.filter((song) => `${song.title}${song.artist}`.toLowerCase().includes(q)).map(({ id, title, artist, playable }) => ({ id, title, artist, playable })) };
+        return { songs: songsRef.current.filter((song) => `${song.title}${song.artist}`.toLowerCase().includes(q)).map(({ id, title, artist, playable }) => ({ id, title, artist, playable })) };
       },
     });
     register({
@@ -54,12 +56,12 @@ export default function Home() {
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute(input) {
         const songId = typeof input === "object" && input && "songId" in input ? Number(input.songId) : NaN;
-        if (!ktv.songs.some((song) => song.id === songId)) throw new Error("歌曲不存在");
+        if (!songsRef.current.some((song) => song.id === songId)) throw new Error("歌曲不存在");
         return ktv.enqueue(songId).then(() => ({ status: "queued", songId }));
       },
     });
     return () => lifecycle.abort();
-  }, [ktv.songs, ktv.enqueue]);
+  }, [ktv.enqueue]);
 
   const playback = ktv.snapshot.playback;
   const add = async (id: number, title: string, priority = false) => {
@@ -72,7 +74,7 @@ export default function Home() {
       <div className="ambient ambient-one" /><div className="ambient ambient-two" />
       <header className="relative z-20 flex min-h-[72px] items-center justify-between gap-3 border-b border-white/8 px-4 py-3 sm:px-7">
         <div className="flex items-center gap-3"><div className="brand-mark"><Mic2 className="size-5" /></div><div><p className="text-[17px] font-bold tracking-tight">OpenKTV</p><p className="text-xs text-white/38">单实例 · 全局歌单</p></div></div>
-        <nav className="hidden items-center gap-1 md:flex"><Link className="nav-link nav-link-active" href="/"><ListMusic />点歌台</Link><Link className="nav-link" href="/player"><MonitorPlay />大屏播放</Link></nav>
+        <nav className="hidden items-center gap-1 md:flex"><a className="nav-link nav-link-active" href="/"><ListMusic />点歌台</a><a className="nav-link" href="/player"><MonitorPlay />大屏播放</a></nav>
         <div className={`status-pill ${ktv.connected ? "status-online" : "status-offline"}`}><span />{ktv.connected ? "后端已连接" : "等待后端"}</div>
         <Button variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white lg:hidden" onClick={() => setQueueOpen(true)}><ListMusic /> {ktv.snapshot.queue.length}</Button>
       </header>
@@ -103,7 +105,7 @@ export default function Home() {
           <div className="mt-6 flex-1 space-y-2 overflow-y-auto pr-1">{ktv.snapshot.queue.length ? ktv.snapshot.queue.map((song, index) => (
             <div key={song.queueId} className="queue-item"><span className="w-5 text-center text-xs font-bold text-white/25">{index + 1}</span><div className={`mini-cover cover-${tones[song.id % tones.length]}`}><Music2 className="size-4" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{song.title}</p><p className="mt-0.5 truncate text-xs text-white/36">{song.artist}</p></div><div className="queue-actions"><button aria-label="上移" disabled={index === 0} onClick={() => void ktv.move(song.queueId, "up")}><ChevronUp /></button><button aria-label="下移" disabled={index === ktv.snapshot.queue.length - 1} onClick={() => void ktv.move(song.queueId, "down")}><ChevronDown /></button><button aria-label="移除" onClick={() => void ktv.remove(song.queueId)}><Trash2 /></button></div></div>
           )) : <div className="py-12 text-center text-sm text-white/38"><ListMusic className="mx-auto mb-3 size-8 opacity-50" />歌单还是空的</div>}</div>
-          <Link href="/player" className="mt-5 flex items-center justify-center gap-2 rounded-2xl border border-fuchsia-300/20 bg-fuchsia-400/10 p-3 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-400/15"><MonitorPlay className="size-4" />打开大屏播放</Link>
+          <a href="/player" className="mt-5 flex items-center justify-center gap-2 rounded-2xl border border-fuchsia-300/20 bg-fuchsia-400/10 p-3 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-400/15"><MonitorPlay className="size-4" />打开大屏播放</a>
         </aside>
         {queueOpen && <button aria-label="关闭歌单遮罩" onClick={() => setQueueOpen(false)} className="fixed inset-0 z-30 bg-black/70 lg:hidden" />}
       </div>

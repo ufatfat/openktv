@@ -64,14 +64,16 @@ export function useKtv() {
     }
   }, []);
 
+  const enqueue = useCallback((songId: number, priority = false) => run(() => ktvApi.enqueue(songId, priority)), [run]);
+  const move = useCallback((queueId: number, action: "up" | "down" | "top") => run(() => ktvApi.move(queueId, action)), [run]);
+  const remove = useCallback((queueId: number) => run(() => ktvApi.remove(queueId)), [run]);
+  const playback = useCallback((changes: Parameters<typeof ktvApi.playback>[0]) => run(() => ktvApi.playback(changes)), [run]);
+  const playSong = useCallback((songId: number) => run(() => ktvApi.playSong(songId)), [run]);
+  const next = useCallback(() => run(() => ktvApi.next()), [run]);
+
   return {
     songs, snapshot, connected, error, loadSongs,
-    enqueue: (songId: number, priority = false) => run(() => ktvApi.enqueue(songId, priority)),
-    move: (queueId: number, action: "up" | "down" | "top") => run(() => ktvApi.move(queueId, action)),
-    remove: (queueId: number) => run(() => ktvApi.remove(queueId)),
-    playback: (changes: Parameters<typeof ktvApi.playback>[0]) => run(() => ktvApi.playback(changes)),
-    playSong: (songId: number) => run(() => ktvApi.playSong(songId)),
-    next: () => run(() => ktvApi.next()),
+    enqueue, move, remove, playback, playSong, next,
     refreshSongs: loadSongs,
   };
 }

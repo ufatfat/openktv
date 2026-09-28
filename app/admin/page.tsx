@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Database, FolderSearch, HardDrive, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,7 +35,7 @@ export default function AdminPage() {
 
   return (
     <main className="admin-page">
-      <header className="admin-header"><div><Link href="/" className="stage-back"><ArrowLeft />返回点歌台</Link><h1>曲库管理</h1><p>扫描本地媒体目录，维护歌曲元数据和播放资源。</p></div><div className="admin-metric"><Database /><span>{songs.length}</span><small>曲库歌曲</small></div></header>
+      <header className="admin-header"><div><a href="/" className="stage-back"><ArrowLeft />返回点歌台</a><h1>曲库管理</h1><p>扫描本地媒体目录，维护歌曲元数据和播放资源。</p></div><div className="admin-metric"><Database /><span>{songs.length}</span><small>曲库歌曲</small></div></header>
       {notice && <div className="admin-notice">{notice}</div>}
       <section className="admin-grid">
         <div className="admin-card scan-card"><div className="admin-card-title"><HardDrive /><div><h2>媒体目录扫描</h2><p>识别音视频文件及同名 LRC 歌词</p></div></div><code>/media</code><Button onClick={() => void scan()} disabled={busy} className="w-full bg-fuchsia-500 text-white hover:bg-fuchsia-400">{busy ? <RefreshCw className="animate-spin" /> : <FolderSearch />}立即扫描</Button></div>
