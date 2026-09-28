@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, CircleAlert, Clock3, ListMusic, Mic2, MonitorPlay, Music2, Pause, Play, Plus, Search, Settings, SkipForward, Sparkles, Trash2, Volume2, VolumeX, X, Zap } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleAlert, Clock3, ListMusic, Mic2, MonitorPlay, Music2, Pause, Play, Plus, Search, SkipForward, Sparkles, Trash2, Volume2, VolumeX, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useKtv } from "@/hooks/use-ktv";
@@ -72,7 +72,7 @@ export default function Home() {
       <div className="ambient ambient-one" /><div className="ambient ambient-two" />
       <header className="relative z-20 flex min-h-[72px] items-center justify-between gap-3 border-b border-white/8 px-4 py-3 sm:px-7">
         <div className="flex items-center gap-3"><div className="brand-mark"><Mic2 className="size-5" /></div><div><p className="text-[17px] font-bold tracking-tight">OpenKTV</p><p className="text-xs text-white/38">单实例 · 全局歌单</p></div></div>
-        <nav className="hidden items-center gap-1 md:flex"><Link className="nav-link nav-link-active" href="/"><ListMusic />点歌台</Link><Link className="nav-link" href="/player"><MonitorPlay />大屏播放</Link><Link className="nav-link" href="/admin"><Settings />曲库管理</Link></nav>
+        <nav className="hidden items-center gap-1 md:flex"><Link className="nav-link nav-link-active" href="/"><ListMusic />点歌台</Link><Link className="nav-link" href="/player"><MonitorPlay />大屏播放</Link></nav>
         <div className={`status-pill ${ktv.connected ? "status-online" : "status-offline"}`}><span />{ktv.connected ? "后端已连接" : "等待后端"}</div>
         <Button variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white lg:hidden" onClick={() => setQueueOpen(true)}><ListMusic /> {ktv.snapshot.queue.length}</Button>
       </header>
@@ -95,7 +95,7 @@ export default function Home() {
               <Button title="置顶" onClick={() => void add(song.id, song.title, true)} size="icon" variant="ghost" className="rounded-xl text-white/35 hover:bg-white/8 hover:text-cyan-200"><Zap /><span className="sr-only">置顶</span></Button>
               <Button onClick={() => void add(song.id, song.title)} size="icon" className="rounded-xl bg-white/9 text-white hover:bg-fuchsia-500"><Plus /><span className="sr-only">加入歌单</span></Button>
             </article>
-          ))}</div> : <div className="flex min-h-56 flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/[0.025] text-center"><Search className="mb-3 size-8 text-white/25" /><p className="font-semibold">没有找到这首歌</p><p className="mt-1 text-sm text-white/40">换个歌名或到曲库管理执行扫描</p></div>}
+          ))}</div> : <div className="flex min-h-56 flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/[0.025] text-center"><Search className="mb-3 size-8 text-white/25" /><p className="font-semibold">没有找到这首歌</p><p className="mt-1 text-sm text-white/40">换个歌名或歌手试试</p></div>}
         </section>
 
         <aside className={`queue-panel ${queueOpen ? "queue-panel-open" : ""}`}>
