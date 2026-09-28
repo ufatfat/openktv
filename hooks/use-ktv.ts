@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ktvApi, socketUrl, type Snapshot, type Song } from "@/lib/ktv-api";
 
 const emptySnapshot: Snapshot = {
-  playback: { songId: null, title: null, artist: null, durationSeconds: 0, playable: false, status: "paused", positionSeconds: 0, volume: 80, muted: false, vocalMode: "accompaniment", pitch: 0, updatedAt: "" },
+  playback: { songId: null, title: null, artist: null, durationSeconds: 0, playable: false, mediaType: null, status: "paused", positionSeconds: 0, volume: 80, muted: false, vocalMode: "accompaniment", pitch: 0, updatedAt: "" },
   queue: [],
 };
 

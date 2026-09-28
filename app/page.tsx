@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, CircleAlert, Clock3, ListMusic, Mic2, MonitorPlay, Music2, Pause, Play, Plus, Search, SkipForward, Sparkles, Trash2, Volume2, VolumeX, X, Zap } from "lucide-react";
+import { Captions, ChevronDown, ChevronUp, CircleAlert, Clock3, ListMusic, Mic2, MonitorPlay, Music2, Pause, Play, Plus, Search, SkipForward, Sparkles, Trash2, Video, Volume2, VolumeX, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useKtv } from "@/hooks/use-ktv";
@@ -93,7 +93,7 @@ export default function Home() {
           {filtered.length ? <div className="song-grid">{filtered.map((song, index) => (
             <article key={song.id} className="song-card group">
               <button className={`cover cover-${tones[song.id % tones.length]}`} onClick={() => song.playable && void ktv.playSong(song.id)} aria-label={`播放 ${song.title}`} disabled={!song.playable}><span className="cover-lines" /><span className="cover-index">{String(index + 1).padStart(2, "0")}</span><span className="cover-play"><Play className="size-5 fill-current" /></span></button>
-              <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h3 className="truncate font-bold">{song.title}</h3>{song.playable ? <span className="media-ready">可播放</span> : <span className="media-missing">缺少媒体</span>}</div><p className="mt-1 truncate text-sm text-white/42">{song.artist} · {song.language} · {duration(song.durationSeconds)}</p></div>
+              <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h3 className="truncate font-bold">{song.title}</h3>{song.playable ? <span className={`media-ready ${song.mediaType === "mv" ? "media-mv" : ""}`}>{song.mediaType === "mv" && <Video />}{song.mediaType === "mv" ? "MV" : "可播放"}</span> : <span className="media-missing">缺少媒体</span>}{song.hasLyrics && <span className="media-lyric" title="含同步歌词"><Captions /></span>}</div><p className="mt-1 truncate text-sm text-white/42">{song.artist} · {song.language} · {duration(song.durationSeconds)}</p></div>
               <Button title="置顶" onClick={() => void add(song.id, song.title, true)} size="icon" variant="ghost" className="rounded-xl text-white/35 hover:bg-white/8 hover:text-cyan-200"><Zap /><span className="sr-only">置顶</span></Button>
               <Button onClick={() => void add(song.id, song.title)} size="icon" className="rounded-xl bg-white/9 text-white hover:bg-fuchsia-500"><Plus /><span className="sr-only">加入歌单</span></Button>
             </article>

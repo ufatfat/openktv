@@ -4,7 +4,7 @@ import { WebSocketServer } from "ws";
 
 const CONTENT_TYPES = {
   ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
-  ".wav": "audio/wav", ".ogg": "audio/ogg", ".flac": "audio/flac",
+  ".m4v": "video/x-m4v", ".mov": "video/quicktime", ".wav": "audio/wav", ".ogg": "audio/ogg", ".flac": "audio/flac",
 };
 
 function json(res, status, payload) {
@@ -79,7 +79,15 @@ export function createKtvApp(store) {
       if (req.method === "GET" && url.pathname === "/api/health") return json(res, 200, { status: "ok", service: "openktv", time: new Date().toISOString() });
       if (req.method === "GET" && url.pathname === "/api/songs") return json(res, 200, { songs: store.listSongs({ query: url.searchParams.get("q") || "", language: url.searchParams.get("language") || "" }) });
       if (req.method === "POST" && url.pathname === "/api/songs") return json(res, 201, { song: store.createSong(await readJson(req)) });
-      if (req.method === "POST" && url.pathname === "/api/songs/scan") return json(res, 200, { ...store.scanMedia(), songs: store.listSongs() });
+      if (req.method === "POST" && url.pathname === "/api/songs/scan") {
+        const scan = store.scanMedia();
+        const scrape = store.scrapeMetadata();
+        return json(res, 200, { ...scan, scraped: scrape.updated, songs: store.listSongs() });
+      }
+      if (req.method === "POST" && url.pathname === "/api/songs/scrape") {
+        const result = store.scrapeMetadata();
+        return json(res, 200, { ...result, songs: store.listSongs() });
+      }
       if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, store.getSnapshot());
       if (req.method === "POST" && url.pathname === "/api/queue") {
         const body = await readJson(req);

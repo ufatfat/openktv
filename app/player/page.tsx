@@ -53,13 +53,13 @@ export default function PlayerPage() {
   };
 
   return (
-    <main className="stage-page">
+    <main className={`stage-page ${playback.mediaType === "mv" ? "stage-has-mv" : "stage-audio"}`}>
       <video ref={mediaRef} className="stage-media" playsInline onTimeUpdate={(event) => syncPosition(event.currentTarget.currentTime)} onEnded={() => void ktv.next()} />
       <div className="stage-vignette" />
       <header className="stage-header"><a href="/" className="stage-back"><ArrowLeft />返回点歌台</a><div className={`status-pill ${ktv.connected ? "status-online" : "status-offline"}`}><span />{ktv.connected ? "实时同步" : "连接中"}</div></header>
-      <section className="stage-content">
+      <section className="stage-content" aria-label="MV 与同步歌词">
         {!playback.songId ? <div className="stage-empty"><Mic2 /><h1>等待点歌</h1><p>在点歌台加入歌曲后，这里会自动开始播放。</p></div> : <>
-          <div className="stage-song"><p>NOW SINGING</p><h1>{playback.title}</h1><span>{playback.artist}</span></div>
+          <div className="stage-song"><p>{playback.mediaType === "mv" ? "NOW PLAYING · MV" : "NOW SINGING"}</p><h1>{playback.title}</h1><span>{playback.artist}</span></div>
           <div className="lyrics-stack">
             <p className="lyric-before">{lyrics[activeIndex - 1]?.text || " "}</p>
             <p className="lyric-active">{lyrics[activeIndex]?.text || (playback.playable ? "音乐即将开始" : "当前歌曲缺少媒体文件")}</p>

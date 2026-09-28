@@ -6,6 +6,10 @@ export type Song = {
   category: string;
   durationSeconds: number;
   playable: boolean;
+  mediaType: "mv" | "audio";
+  hasLyrics: boolean;
+  metadataSource: "manual" | "filename" | "embedded" | "system" | "demo";
+  scrapedAt?: string | null;
 };
 
 export type QueueItem = Song & { queueId: number; position: number };
@@ -16,6 +20,7 @@ export type Playback = {
   artist: string | null;
   durationSeconds: number | null;
   playable: boolean;
+  mediaType: "mv" | "audio" | null;
   status: "playing" | "paused";
   positionSeconds: number;
   volume: number;
@@ -52,7 +57,8 @@ export const ktvApi = {
   playback: (changes: Partial<Playback>) => request<Snapshot>("/api/playback", { method: "PATCH", body: JSON.stringify(changes) }),
   playSong: (songId: number) => request<Snapshot>("/api/playback/play", { method: "POST", body: JSON.stringify({ songId }) }),
   next: () => request<Snapshot>("/api/playback/next", { method: "POST" }),
-  scan: () => request<{ scanned: number; added: number; songs: Song[] }>("/api/songs/scan", { method: "POST" }),
+  scan: () => request<{ scanned: number; added: number; scraped: number; songs: Song[] }>("/api/songs/scan", { method: "POST" }),
+  scrape: () => request<{ scanned: number; updated: number; songs: Song[] }>("/api/songs/scrape", { method: "POST" }),
   createSong: (song: { title: string; artist: string; language: string; category: string; mediaPath?: string }) => request<{ song: Song }>("/api/songs", { method: "POST", body: JSON.stringify(song) }),
   deleteSong: (id: number) => request<{ deleted: boolean }>(`/api/songs/${id}`, { method: "DELETE" }),
   lyrics: (id: number) => request<{ lines: Array<{ time: number; text: string }> }>(`/api/lyrics/${id}`),

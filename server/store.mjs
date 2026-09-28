@@ -1,8 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
-const MEDIA_EXTENSIONS = new Set([".mp4", ".webm", ".mp3", ".m4a", ".wav", ".ogg", ".flac"]);
+const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".m4v", ".mov"]);
+const MEDIA_EXTENSIONS = new Set([...VIDEO_EXTENSIONS, ".mp3", ".m4a", ".wav", ".ogg", ".flac"]);
 
 function now() {
   return new Date().toISOString();
@@ -53,9 +55,45 @@ function scanFiles(root) {
   return files;
 }
 
+function cleanName(value = "") {
+  return value.replace(/\[(?:mv|official|伴奏|原唱|高清|\d+p)\]/gi, "").replace(/\((?:official\s*)?(?:music\s*)?video\)/gi, "").replaceAll(/[_]+/g, " ").replaceAll(/\s+/g, " ").trim();
+}
+
+function metadataFromFilename(path) {
+  const stem = cleanName(basename(path, extname(path)));
+  const parts = stem.split(/\s+-\s+|\s+–\s+/).map(cleanName).filter(Boolean);
+  if (parts.length >= 2) return { artist: parts[0], title: parts.slice(1).join(" - ") };
+  const folder = cleanName(basename(dirname(path)));
+  return { title: stem || "未命名歌曲", artist: folder && folder !== "media" ? folder : "未知歌手" };
+}
+
+function defaultProbeMedia(path) {
+  const result = spawnSync("ffprobe", ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", path], { encoding: "utf8", timeout: 15000 });
+  if (result.error || result.status !== 0 || !result.stdout) return {};
+  try {
+    const payload = JSON.parse(result.stdout);
+    const tags = { ...(payload.format?.tags || {}), ...(payload.streams?.find((stream) => stream.codec_type === "audio")?.tags || {}) };
+    const normalized = Object.fromEntries(Object.entries(tags).map(([key, value]) => [key.toLowerCase(), String(value)]));
+    return {
+      title: normalized.title,
+      artist: normalized.artist || normalized.album_artist,
+      language: normalized.language,
+      category: normalized.genre,
+      durationSeconds: Math.round(Number(payload.format?.duration) || 0),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function mediaType(path) {
+  return VIDEO_EXTENSIONS.has(extname(path).toLowerCase()) ? "mv" : "audio";
+}
+
 export class KtvStore {
-  constructor({ dbPath, mediaDir }) {
+  constructor({ dbPath, mediaDir, probeMedia = defaultProbeMedia }) {
     this.mediaDir = resolve(mediaDir);
+    this.probeMedia = probeMedia;
     mkdirSync(dirname(dbPath), { recursive: true });
     mkdirSync(this.mediaDir, { recursive: true });
     this.db = new DatabaseSync(dbPath);
@@ -75,6 +113,9 @@ export class KtvStore {
         duration_seconds INTEGER NOT NULL DEFAULT 0,
         media_path TEXT,
         lyric_path TEXT,
+        media_type TEXT NOT NULL DEFAULT 'audio',
+        metadata_source TEXT NOT NULL DEFAULT 'manual',
+        scraped_at TEXT,
         created_at TEXT NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS songs_media_path_unique ON songs(media_path) WHERE media_path IS NOT NULL;
@@ -97,6 +138,10 @@ export class KtvStore {
       );
       INSERT OR IGNORE INTO playback_state (id, updated_at) VALUES (1, '${now()}');
     `);
+    const columns = new Set(this.db.prepare("PRAGMA table_info(songs)").all().map((column) => column.name));
+    if (!columns.has("media_type")) this.db.exec("ALTER TABLE songs ADD COLUMN media_type TEXT NOT NULL DEFAULT 'audio'");
+    if (!columns.has("metadata_source")) this.db.exec("ALTER TABLE songs ADD COLUMN metadata_source TEXT NOT NULL DEFAULT 'manual'");
+    if (!columns.has("scraped_at")) this.db.exec("ALTER TABLE songs ADD COLUMN scraped_at TEXT");
   }
 
   seed() {
@@ -106,13 +151,13 @@ export class KtvStore {
     const lyricPath = join(this.mediaDir, "system-check.lrc");
     createDemoWave(demoPath);
     if (!existsSync(lyricPath)) writeFileSync(lyricPath, "[00:00.00]OpenKTV 系统试音\n[00:03.00]播放器与声音输出正常\n[00:06.00]现在可以导入你的本地曲库\n[00:09.00]准备好，开始唱吧\n");
-    const insert = this.db.prepare("INSERT INTO songs (title, artist, language, category, duration_seconds, media_path, lyric_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    insert.run("系统试音", "OpenKTV", "其他", "系统", 12, demoPath, lyricPath, now());
+    const insert = this.db.prepare("INSERT INTO songs (title, artist, language, category, duration_seconds, media_path, lyric_path, media_type, metadata_source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    insert.run("系统试音", "OpenKTV", "其他", "系统", 12, demoPath, lyricPath, "audio", "system", now());
     const demos = [
       ["晚风来信", "林屿", "国语", "流行"], ["沿海公路", "沈星", "国语", "轻快"],
       ["玻璃晴朗", "Nine Days", "粤语", "经典"], ["心跳失真", "NOVA", "国语", "摇滚"],
     ];
-    for (const song of demos) insert.run(song[0], song[1], song[2], song[3], 0, null, null, now());
+    for (const song of demos) insert.run(song[0], song[1], song[2], song[3], 0, null, null, "audio", "demo", now());
     this.db.prepare("UPDATE playback_state SET current_song_id = 1 WHERE id = 1").run();
   }
 
@@ -128,13 +173,15 @@ export class KtvStore {
     const q = `%${query.trim()}%`;
     return this.db.prepare(`
       SELECT id, title, artist, language, category, duration_seconds AS durationSeconds,
-             media_path AS mediaPath, lyric_path AS lyricPath,
+             media_path AS mediaPath, lyric_path AS lyricPath, media_type AS mediaType,
+             metadata_source AS metadataSource, scraped_at AS scrapedAt,
+             CASE WHEN lyric_path IS NOT NULL THEN 1 ELSE 0 END AS hasLyrics,
              CASE WHEN media_path IS NOT NULL THEN 1 ELSE 0 END AS playable
       FROM songs
       WHERE (? = '' OR title LIKE ? OR artist LIKE ?)
         AND (? = '' OR language = ? OR category = ?)
       ORDER BY playable DESC, id DESC
-    `).all(query.trim(), q, q, language, language, language).map((song) => ({ ...song, playable: Boolean(song.playable) }));
+    `).all(query.trim(), q, q, language, language, language).map((song) => ({ ...song, playable: Boolean(song.playable), hasLyrics: Boolean(song.hasLyrics) }));
   }
 
   getSong(id) {
@@ -147,10 +194,12 @@ export class KtvStore {
     if (mediaPath && !existsSync(mediaPath)) throw new Error("媒体文件不存在");
     const lyricCandidate = mediaPath ? mediaPath.replace(/\.[^.]+$/, ".lrc") : null;
     const lyricPath = input.lyricPath ? this.normalizeMediaPath(input.lyricPath) : (lyricCandidate && existsSync(lyricCandidate) ? lyricCandidate : null);
-    const result = this.db.prepare("INSERT INTO songs (title, artist, language, category, duration_seconds, media_path, lyric_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
-      input.title.trim(), input.artist?.trim() || "未知歌手", input.language?.trim() || "其他", input.category?.trim() || "本地曲库", Number(input.durationSeconds) || 0, mediaPath, lyricPath, now(),
+    const result = this.db.prepare("INSERT INTO songs (title, artist, language, category, duration_seconds, media_path, lyric_path, media_type, metadata_source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?)").run(
+      input.title.trim(), input.artist?.trim() || "未知歌手", input.language?.trim() || "其他", input.category?.trim() || "本地曲库", Number(input.durationSeconds) || 0, mediaPath, lyricPath, mediaPath ? mediaType(mediaPath) : "audio", now(),
     );
-    return this.getSong(Number(result.lastInsertRowid));
+    const id = Number(result.lastInsertRowid);
+    if (mediaPath) this.scrapeMetadata(id);
+    return this.listSongs().find((song) => song.id === id);
   }
 
   deleteSong(id) {
@@ -160,15 +209,43 @@ export class KtvStore {
   }
 
   scanMedia() {
-    const insert = this.db.prepare("INSERT OR IGNORE INTO songs (title, artist, language, category, media_path, lyric_path, created_at) VALUES (?, '未知歌手', '其他', '本地扫描', ?, ?, ?)");
+    const insert = this.db.prepare("INSERT OR IGNORE INTO songs (title, artist, language, category, media_path, lyric_path, media_type, metadata_source, created_at) VALUES (?, ?, '其他', '本地扫描', ?, ?, ?, 'filename', ?)");
     let added = 0;
-    for (const path of scanFiles(this.mediaDir)) {
-      const title = basename(path, extname(path)).replaceAll(/[_-]+/g, " ").trim();
+    const files = scanFiles(this.mediaDir);
+    for (const path of files) {
+      const guessed = metadataFromFilename(path);
       const lyricPath = path.replace(/\.[^.]+$/, ".lrc");
-      const result = insert.run(title, path, existsSync(lyricPath) ? lyricPath : null, now());
+      const result = insert.run(guessed.title, guessed.artist, path, existsSync(lyricPath) ? lyricPath : null, mediaType(path), now());
       added += result.changes;
     }
-    return { scanned: scanFiles(this.mediaDir).length, added };
+    return { scanned: files.length, added };
+  }
+
+  scrapeMetadata(songId = null) {
+    const rows = songId ? [this.getSong(songId)].filter(Boolean) : this.db.prepare("SELECT * FROM songs WHERE media_path IS NOT NULL").all();
+    const update = this.db.prepare(`
+      UPDATE songs SET title = ?, artist = ?, language = ?, category = ?, duration_seconds = ?,
+        lyric_path = ?, media_type = ?, metadata_source = ?, scraped_at = ? WHERE id = ?
+    `);
+    let updated = 0;
+    for (const song of rows) {
+      const path = this.normalizeMediaPath(song.media_path);
+      if (!path || !existsSync(path)) continue;
+      const guessed = metadataFromFilename(path);
+      const embedded = this.probeMedia(path) || {};
+      const lyricCandidate = path.replace(/\.[^.]+$/, ".lrc");
+      const filenameManaged = song.metadata_source === "filename";
+      const title = cleanName(embedded.title) || (filenameManaged ? guessed.title : song.title) || guessed.title;
+      const artist = cleanName(embedded.artist) || (filenameManaged || song.artist === "未知歌手" ? guessed.artist : song.artist) || guessed.artist;
+      const language = cleanName(embedded.language) || (song.language === "其他" ? "其他" : song.language);
+      const category = cleanName(embedded.category) || (song.category === "本地扫描" ? (mediaType(path) === "mv" ? "MV" : "本地曲库") : song.category);
+      const durationSeconds = Number(embedded.durationSeconds) || song.duration_seconds || 0;
+      const lyricPath = existsSync(lyricCandidate) ? lyricCandidate : song.lyric_path;
+      const source = embedded.title || embedded.artist || embedded.durationSeconds ? "embedded" : (filenameManaged ? "filename" : song.metadata_source);
+      update.run(title, artist, language, category, durationSeconds, lyricPath, mediaType(path), source, now(), song.id);
+      updated += 1;
+    }
+    return { scanned: rows.length, updated };
   }
 
   getSnapshot() {
@@ -176,11 +253,12 @@ export class KtvStore {
       SELECT p.status, p.position_seconds AS positionSeconds, p.volume, p.muted,
              p.vocal_mode AS vocalMode, p.pitch, p.updated_at AS updatedAt,
              s.id AS songId, s.title, s.artist, s.duration_seconds AS durationSeconds,
+             s.media_type AS mediaType,
              CASE WHEN s.media_path IS NOT NULL THEN 1 ELSE 0 END AS playable
       FROM playback_state p LEFT JOIN songs s ON s.id = p.current_song_id WHERE p.id = 1
     `).get();
     const queue = this.db.prepare(`
-      SELECT q.id AS queueId, q.position, s.id, s.title, s.artist, s.language,
+      SELECT q.id AS queueId, q.position, s.id, s.title, s.artist, s.language, s.media_type AS mediaType,
              s.duration_seconds AS durationSeconds, CASE WHEN s.media_path IS NOT NULL THEN 1 ELSE 0 END AS playable
       FROM queue_items q JOIN songs s ON s.id = q.song_id ORDER BY q.position, q.id
     `).all().map((item) => ({ ...item, playable: Boolean(item.playable) }));
