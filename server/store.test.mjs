@@ -83,3 +83,22 @@ test("automatically scrapes a manually added MV", () => {
     assert.equal(song.metadataSource, "embedded");
   } finally { cleanup(); }
 });
+
+test("applies trusted online metadata and saves synchronized lyrics", () => {
+  const { store, mediaDir, cleanup } = fixture({ probeMedia: () => ({}) });
+  try {
+    writeFileSync(join(mediaDir, "Jay - Sunny.mp4"), "video-fixture");
+    const song = store.createSong({ title: "晴天", artist: "周杰伦", mediaPath: "Jay - Sunny.mp4" });
+    store.recordOnlineScrape(song.id, { status: "matched", candidate: {
+      providerId: "mbid-1", title: "晴天", artist: "周杰伦", album: "叶惠美", year: "2003",
+      category: "流行", durationSeconds: 269, coverUrl: "https://example.test/cover.jpg",
+      syncedLyrics: "[00:01.00]故事的小黄花", score: { total: 0.98 },
+    } }, { saveLyrics: true });
+    const updated = store.listSongs().find((item) => item.id === song.id);
+    assert.equal(updated.scrapeStatus, "matched");
+    assert.equal(updated.album, "叶惠美");
+    assert.equal(updated.releaseYear, "2003");
+    assert.equal(updated.matchScore, 0.98);
+    assert.equal(updated.hasLyrics, true);
+  } finally { cleanup(); }
+});

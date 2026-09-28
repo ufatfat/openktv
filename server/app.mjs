@@ -53,7 +53,7 @@ function serveMedia(req, res, path) {
   return createReadStream(path, { start, end }).pipe(res);
 }
 
-export function createKtvApp(store) {
+export function createKtvApp(store, { scraper = null } = {}) {
   const sockets = new Set();
   const websocket = new WebSocketServer({ noServer: true });
   websocket.on("connection", (socket) => {
@@ -87,6 +87,27 @@ export function createKtvApp(store) {
       if (req.method === "POST" && url.pathname === "/api/songs/scrape") {
         const result = store.scrapeMetadata();
         return json(res, 200, { ...result, songs: store.listSongs() });
+      }
+      if (req.method === "POST" && url.pathname === "/api/songs/scrape/online") {
+        if (!scraper) return json(res, 503, { error: "在线刮削器未配置" });
+        const body = await readJson(req);
+        const limit = Math.max(1, Math.min(20, Number(body.limit) || 10));
+        const songs = store.songsForOnlineScrape({ limit, onlyIncomplete: body.onlyIncomplete !== false });
+        const summary = { processed: 0, matched: 0, review: 0, notFound: 0, failed: 0, remaining: Math.max(0, store.countOnlineScrapePending() - songs.length) };
+        for (const song of songs) {
+          summary.processed += 1;
+          try {
+            const result = await scraper.scrape(song, { fetchLyrics: body.fetchLyrics !== false });
+            store.recordOnlineScrape(song.id, result, { overwrite: Boolean(body.overwrite), saveLyrics: body.fetchLyrics !== false });
+            if (result.status === "matched") summary.matched += 1;
+            else if (result.status === "review") summary.review += 1;
+            else summary.notFound += 1;
+          } catch (error) {
+            summary.failed += 1;
+            store.recordScrapeFailure(song.id, error instanceof Error ? error.message : "在线刮削失败");
+          }
+        }
+        return json(res, 200, { ...summary, songs: store.listSongs() });
       }
       if (req.method === "GET" && url.pathname === "/api/state") return json(res, 200, store.getSnapshot());
       if (req.method === "POST" && url.pathname === "/api/queue") {

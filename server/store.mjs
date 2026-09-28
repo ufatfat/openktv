@@ -116,6 +116,13 @@ export class KtvStore {
         media_type TEXT NOT NULL DEFAULT 'audio',
         metadata_source TEXT NOT NULL DEFAULT 'manual',
         scraped_at TEXT,
+        album TEXT NOT NULL DEFAULT '',
+        release_year TEXT NOT NULL DEFAULT '',
+        cover_url TEXT NOT NULL DEFAULT '',
+        metadata_id TEXT,
+        match_score REAL,
+        scrape_status TEXT NOT NULL DEFAULT 'local',
+        scrape_note TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS songs_media_path_unique ON songs(media_path) WHERE media_path IS NOT NULL;
@@ -142,6 +149,13 @@ export class KtvStore {
     if (!columns.has("media_type")) this.db.exec("ALTER TABLE songs ADD COLUMN media_type TEXT NOT NULL DEFAULT 'audio'");
     if (!columns.has("metadata_source")) this.db.exec("ALTER TABLE songs ADD COLUMN metadata_source TEXT NOT NULL DEFAULT 'manual'");
     if (!columns.has("scraped_at")) this.db.exec("ALTER TABLE songs ADD COLUMN scraped_at TEXT");
+    if (!columns.has("album")) this.db.exec("ALTER TABLE songs ADD COLUMN album TEXT NOT NULL DEFAULT ''");
+    if (!columns.has("release_year")) this.db.exec("ALTER TABLE songs ADD COLUMN release_year TEXT NOT NULL DEFAULT ''");
+    if (!columns.has("cover_url")) this.db.exec("ALTER TABLE songs ADD COLUMN cover_url TEXT NOT NULL DEFAULT ''");
+    if (!columns.has("metadata_id")) this.db.exec("ALTER TABLE songs ADD COLUMN metadata_id TEXT");
+    if (!columns.has("match_score")) this.db.exec("ALTER TABLE songs ADD COLUMN match_score REAL");
+    if (!columns.has("scrape_status")) this.db.exec("ALTER TABLE songs ADD COLUMN scrape_status TEXT NOT NULL DEFAULT 'local'");
+    if (!columns.has("scrape_note")) this.db.exec("ALTER TABLE songs ADD COLUMN scrape_note TEXT NOT NULL DEFAULT ''");
   }
 
   seed() {
@@ -175,6 +189,9 @@ export class KtvStore {
       SELECT id, title, artist, language, category, duration_seconds AS durationSeconds,
              media_path AS mediaPath, lyric_path AS lyricPath, media_type AS mediaType,
              metadata_source AS metadataSource, scraped_at AS scrapedAt,
+             album, release_year AS releaseYear, cover_url AS coverUrl,
+             metadata_id AS metadataId, match_score AS matchScore,
+             scrape_status AS scrapeStatus, scrape_note AS scrapeNote,
              CASE WHEN lyric_path IS NOT NULL THEN 1 ELSE 0 END AS hasLyrics,
              CASE WHEN media_path IS NOT NULL THEN 1 ELSE 0 END AS playable
       FROM songs
@@ -225,7 +242,7 @@ export class KtvStore {
     const rows = songId ? [this.getSong(songId)].filter(Boolean) : this.db.prepare("SELECT * FROM songs WHERE media_path IS NOT NULL").all();
     const update = this.db.prepare(`
       UPDATE songs SET title = ?, artist = ?, language = ?, category = ?, duration_seconds = ?,
-        lyric_path = ?, media_type = ?, metadata_source = ?, scraped_at = ? WHERE id = ?
+        lyric_path = ?, media_type = ?, metadata_source = ?, scraped_at = ?, scrape_status = 'local', scrape_note = '' WHERE id = ?
     `);
     let updated = 0;
     for (const song of rows) {
@@ -246,6 +263,51 @@ export class KtvStore {
       updated += 1;
     }
     return { scanned: rows.length, updated };
+  }
+
+  songsForOnlineScrape({ limit = 10, onlyIncomplete = true } = {}) {
+    const where = onlyIncomplete ? "WHERE media_path IS NOT NULL AND (scrape_status != 'matched' OR metadata_id IS NULL)" : "WHERE media_path IS NOT NULL";
+    return this.db.prepare(`
+      SELECT id, title, artist, album, duration_seconds AS durationSeconds, media_path AS mediaPath,
+        lyric_path AS lyricPath, metadata_source AS metadataSource, scrape_status AS scrapeStatus
+      FROM songs ${where} ORDER BY CASE scrape_status WHEN 'review' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END, id LIMIT ?
+    `).all(limit);
+  }
+
+  countOnlineScrapePending() {
+    return Number(this.db.prepare("SELECT COUNT(*) AS count FROM songs WHERE media_path IS NOT NULL AND (scrape_status != 'matched' OR metadata_id IS NULL)").get().count);
+  }
+
+  recordOnlineScrape(id, result, { overwrite = false, saveLyrics = true } = {}) {
+    const song = this.getSong(id);
+    if (!song) throw new Error("歌曲不存在");
+    const candidate = result.candidate;
+    if (result.status !== "matched" || !candidate) {
+      const note = result.status === "review" && candidate ? `候选：${candidate.artist} - ${candidate.title}` : "没有找到可信候选";
+      this.db.prepare("UPDATE songs SET scrape_status = ?, match_score = ?, scrape_note = ?, scraped_at = ? WHERE id = ?").run(result.status, candidate?.score?.total ?? null, note, now(), id);
+      return;
+    }
+    let lyricPath = song.lyric_path;
+    if (saveLyrics && candidate.syncedLyrics && song.media_path && (overwrite || !lyricPath)) {
+      lyricPath = song.media_path.replace(/\.[^.]+$/, ".lrc");
+      writeFileSync(lyricPath, `${candidate.syncedLyrics.trim()}\n`, "utf8");
+    }
+    const category = candidate.category || song.category;
+    const title = overwrite || song.metadata_source === "filename" || song.artist === "未知歌手" ? candidate.title : song.title;
+    const artist = overwrite || song.metadata_source === "filename" || song.artist === "未知歌手" ? candidate.artist : song.artist;
+    this.db.prepare(`
+      UPDATE songs SET title = ?, artist = ?, album = ?, release_year = ?, category = ?, cover_url = ?,
+        duration_seconds = ?, lyric_path = ?, metadata_source = 'musicbrainz', metadata_id = ?, match_score = ?,
+        scrape_status = 'matched', scrape_note = ?, scraped_at = ? WHERE id = ?
+    `).run(
+      title, artist, candidate.album || song.album || "", candidate.year || song.release_year || "", category,
+      candidate.coverUrl || song.cover_url || "", candidate.durationSeconds || song.duration_seconds || 0, lyricPath,
+      candidate.providerId, candidate.score.total, candidate.lyricsError || "", now(), id,
+    );
+  }
+
+  recordScrapeFailure(id, message) {
+    this.db.prepare("UPDATE songs SET scrape_status = 'failed', scrape_note = ?, scraped_at = ? WHERE id = ?").run(String(message).slice(0, 300), now(), id);
   }
 
   getSnapshot() {
