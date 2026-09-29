@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ktvApi, socketUrl, type Snapshot, type Song } from "@/lib/ktv-api";
+import { ktvApi, socketUrl, type Playback, type Snapshot, type Song } from "@/lib/ktv-api";
 
 const emptySnapshot: Snapshot = {
   playback: { songId: null, title: null, artist: null, durationSeconds: 0, playable: false, mediaType: null, status: "paused", positionSeconds: 0, volume: 80, muted: false, vocalMode: "accompaniment", pitch: 0, updatedAt: "" },
@@ -26,7 +26,7 @@ export function useKtv() {
   }, []);
 
   useEffect(() => {
-    void loadSongs();
+    void ktvApi.songs().then((result) => { setSongs(result.songs); setError(""); }).catch((cause) => setError(cause instanceof Error ? cause.message : "无法连接后端"));
     void ktvApi.state().then(setSnapshot).catch((cause) => setError(cause instanceof Error ? cause.message : "无法连接后端"));
     let socket: WebSocket | null = null;
     let stopped = false;
@@ -50,11 +50,11 @@ export function useKtv() {
       socket?.close();
       if (retryRef.current) window.clearTimeout(retryRef.current);
     };
-  }, [loadSongs]);
+  }, []);
 
-  const run = useCallback(async (operation: () => Promise<Snapshot>) => {
+  const run = useCallback(async (operation: Promise<Snapshot>) => {
     try {
-      const next = await operation();
+      const next = await operation;
       setSnapshot(next);
       setError("");
       return next;
@@ -64,12 +64,12 @@ export function useKtv() {
     }
   }, []);
 
-  const enqueue = useCallback((songId: number, priority = false) => run(() => ktvApi.enqueue(songId, priority)), [run]);
-  const move = useCallback((queueId: number, action: "up" | "down" | "top") => run(() => ktvApi.move(queueId, action)), [run]);
-  const remove = useCallback((queueId: number) => run(() => ktvApi.remove(queueId)), [run]);
-  const playback = useCallback((changes: Parameters<typeof ktvApi.playback>[0]) => run(() => ktvApi.playback(changes)), [run]);
-  const playSong = useCallback((songId: number) => run(() => ktvApi.playSong(songId)), [run]);
-  const next = useCallback(() => run(() => ktvApi.next()), [run]);
+  const enqueue = useCallback((songId: number, priority = false) => run(ktvApi.enqueue(songId, priority)), [run]);
+  const move = useCallback((queueId: number, action: "up" | "down" | "top") => run(ktvApi.move(queueId, action)), [run]);
+  const remove = useCallback((queueId: number) => run(ktvApi.remove(queueId)), [run]);
+  const playback = useCallback((changes: Partial<Playback>) => run(ktvApi.playback(changes)), [run]);
+  const playSong = useCallback((songId: number) => run(ktvApi.playSong(songId)), [run]);
+  const next = useCallback(() => run(ktvApi.next()), [run]);
 
   return {
     songs, snapshot, connected, error, loadSongs,

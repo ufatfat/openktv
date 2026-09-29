@@ -1,31 +1,57 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ListMusic, Mic2, Pause, Play, RotateCcw, SkipForward, Volume2, VolumeX } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useRef, useState } from "react";
+import { Mic2 } from "lucide-react";
 import { useKtv } from "@/hooks/use-ktv";
-import { ktvApi } from "@/lib/ktv-api";
-
-type LyricLine = { time: number; text: string };
+import { useKaraokeScore } from "@/hooks/use-karaoke-score";
+import { ktvApi, type LyricDocument, type ScoringProfile } from "@/lib/ktv-api";
+import { LyricsDisplayHost } from "@/plugins/lyrics-display/host";
 
 export default function PlayerPage() {
   const ktv = useKtv();
   const mediaRef = useRef<HTMLVideoElement>(null);
   const lastSyncRef = useRef(0);
-  const [lyrics, setLyrics] = useState<LyricLine[]>([]);
+  const lastMediaErrorRef = useRef("");
+  const [lyricResult, setLyricResult] = useState<(LyricDocument & { songId: number }) | null>(null);
+  const [scoringResult, setScoringResult] = useState<{ songId: number; profile: ScoringProfile | null } | null>(null);
   const [position, setPosition] = useState(0);
-  const [needsGesture, setNeedsGesture] = useState(false);
   const playback = ktv.snapshot.playback;
+  const lyricDocument = lyricResult?.songId === playback.songId ? lyricResult : null;
+  const lyrics = lyricDocument?.lines || [];
+  const scoringProfile = scoringResult?.songId === playback.songId ? scoringResult.profile : null;
+  const scoringNotes = scoringProfile?.notes || [];
+  const { state: scoreState, pitchSamples, start: startScore } = useKaraokeScore(scoringProfile, playback.songId, position, { enabled: playback.status === "playing" });
 
   useEffect(() => {
-    if (!playback.songId) { setLyrics([]); return; }
-    void ktvApi.lyrics(playback.songId).then((result) => setLyrics(result.lines)).catch(() => setLyrics([]));
+    if (!scoringProfile || !playback.songId || playback.status !== "playing" || scoreState.status !== "idle") return;
+    void startScore();
+  }, [playback.songId, playback.status, scoreState.status, scoringProfile, startScore]);
+
+  useEffect(() => {
     const media = mediaRef.current;
-    if (media && playback.playable) {
-      media.src = ktvApi.mediaUrl(playback.songId);
-      media.load();
-      setPosition(0);
+    if (!playback.songId || !playback.playable) {
+      if (media) {
+        media.pause();
+        media.removeAttribute("src");
+        media.load();
+        delete media.dataset.songId;
+      }
+      return;
     }
+    const songId = playback.songId;
+    let cancelled = false;
+    void ktvApi.lyrics(songId)
+      .then((result) => { if (!cancelled) setLyricResult({ songId, ...result }); })
+      .catch(() => { if (!cancelled) setLyricResult({ songId, format: null, formatName: null, displayPlugin: "traditional", lines: [] }); });
+    void ktvApi.scoring(songId)
+      .then((result) => { if (!cancelled) setScoringResult({ songId, profile: result.profile }); })
+      .catch(() => { if (!cancelled) setScoringResult({ songId, profile: null }); });
+    if (media && media.dataset.songId !== String(songId)) {
+      media.dataset.songId = String(songId);
+      media.src = ktvApi.mediaUrl(songId);
+      media.load();
+    }
+    return () => { cancelled = true; };
   }, [playback.songId, playback.playable]);
 
   useEffect(() => {
@@ -33,49 +59,93 @@ export default function PlayerPage() {
     if (!media) return;
     media.volume = playback.volume / 100;
     media.muted = playback.muted;
-    if (playback.status === "playing" && playback.playable) {
-      void media.play().then(() => setNeedsGesture(false)).catch(() => setNeedsGesture(true));
-    } else media.pause();
-  }, [playback.status, playback.volume, playback.muted, playback.playable]);
+    let disposed = false;
+    let playPending = false;
+    const reportError = (error: unknown) => {
+      const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      if (lastMediaErrorRef.current === message) return;
+      lastMediaErrorRef.current = message;
+      console.error(`[OpenKTV] 无法播放歌曲 ${playback.songId ?? "unknown"}: ${message}`);
+    };
+    const requestPlayback = async () => {
+      if (disposed || playPending || !media.paused || playback.status !== "playing" || !playback.playable) return;
+      playPending = true;
+      try {
+        await media.play();
+        lastMediaErrorRef.current = "";
+      } catch (error) {
+        reportError(error);
+      } finally {
+        playPending = false;
+      }
+    };
+    const reportMediaElementError = () => {
+      const error = media.error;
+      reportError(error ? `MediaError ${error.code}: ${error.message || "媒体加载失败"}` : "媒体加载失败");
+    };
+    const resumeAfterGesture = () => { void requestPlayback(); };
+    const resumeWhenReady = () => { void requestPlayback(); };
+    media.addEventListener("canplay", resumeWhenReady);
+    media.addEventListener("error", reportMediaElementError);
+    window.addEventListener("pointerdown", resumeAfterGesture);
+    window.addEventListener("keydown", resumeAfterGesture);
+    if (playback.status === "playing" && playback.playable) void requestPlayback();
+    else {
+      media.pause();
+    }
+    return () => {
+      disposed = true;
+      media.removeEventListener("canplay", resumeWhenReady);
+      media.removeEventListener("error", reportMediaElementError);
+      window.removeEventListener("pointerdown", resumeAfterGesture);
+      window.removeEventListener("keydown", resumeAfterGesture);
+    };
+  }, [playback.songId, playback.status, playback.volume, playback.muted, playback.playable]);
 
-  const activeIndex = useMemo(() => {
-    let index = -1;
-    lyrics.forEach((line, current) => { if (line.time <= position) index = current; });
-    return index;
-  }, [lyrics, position]);
+  useEffect(() => {
+    if (playback.status !== "playing" || !playback.playable) return;
+    let frame = 0;
+    let lastUpdate = 0;
+    const update = (time: number) => {
+      if (time - lastUpdate >= 33 && mediaRef.current) {
+        lastUpdate = time;
+        setPosition(mediaRef.current.currentTime);
+      }
+      frame = window.requestAnimationFrame(update);
+    };
+    frame = window.requestAnimationFrame(update);
+    return () => window.cancelAnimationFrame(frame);
+  }, [playback.songId, playback.status, playback.playable]);
 
   const syncPosition = (value: number) => {
-    setPosition(value);
     if (Date.now() - lastSyncRef.current > 2000) {
       lastSyncRef.current = Date.now();
-      void ktv.playback({ positionSeconds: value });
+      void ktv.playback({ positionSeconds: value }).catch(() => undefined);
     }
   };
 
   return (
-    <main className={`stage-page ${playback.mediaType === "mv" ? "stage-has-mv" : "stage-audio"}`}>
-      <video ref={mediaRef} className="stage-media" playsInline onTimeUpdate={(event) => syncPosition(event.currentTarget.currentTime)} onEnded={() => void ktv.next()} />
-      <div className="stage-vignette" />
-      <header className="stage-header"><a href="/" className="stage-back"><ArrowLeft />返回点歌台</a><div className={`status-pill ${ktv.connected ? "status-online" : "status-offline"}`}><span />{ktv.connected ? "实时同步" : "连接中"}</div></header>
-      <section className="stage-content" aria-label="MV 与同步歌词">
-        {!playback.songId ? <div className="stage-empty"><Mic2 /><h1>等待点歌</h1><p>在点歌台加入歌曲后，这里会自动开始播放。</p></div> : <>
-          <div className="stage-song"><p>{playback.mediaType === "mv" ? "NOW PLAYING · MV" : "NOW SINGING"}</p><h1>{playback.title}</h1><span>{playback.artist}</span></div>
-          <div className="lyrics-stack">
-            <p className="lyric-before">{lyrics[activeIndex - 1]?.text || " "}</p>
-            <p className="lyric-active">{lyrics[activeIndex]?.text || (playback.playable ? "音乐即将开始" : "当前歌曲缺少媒体文件")}</p>
-            <p className="lyric-after">{lyrics[activeIndex + 1]?.text || " "}</p>
-          </div>
-        </>}
-      </section>
-
-      {needsGesture && <button className="autoplay-gate" onClick={() => void mediaRef.current?.play().then(() => setNeedsGesture(false))}><Play className="fill-current" />点击开始播放</button>}
-
-      <footer className="stage-controls">
-        <div className="stage-now"><div className="brand-mark"><Mic2 /></div><div><strong>{playback.title || "OpenKTV"}</strong><span>{playback.artist || "等待点歌"}</span></div></div>
-        <div className="stage-buttons"><Button variant="ghost" size="icon" onClick={() => { if (mediaRef.current) mediaRef.current.currentTime = 0; }} className="text-white hover:bg-white/10 hover:text-white"><RotateCcw /><span className="sr-only">重唱</span></Button><Button size="icon-lg" onClick={() => void ktv.playback({ status: playback.status === "playing" ? "paused" : "playing" })} className="rounded-full bg-white text-black hover:bg-fuchsia-200">{playback.status === "playing" ? <Pause className="fill-current" /> : <Play className="fill-current" />}</Button><Button variant="ghost" size="icon" onClick={() => void ktv.next()} className="text-white hover:bg-white/10 hover:text-white"><SkipForward /><span className="sr-only">下一首</span></Button></div>
-        <div className="stage-volume"><Button variant="ghost" size="icon" onClick={() => void ktv.playback({ muted: !playback.muted })} className="text-white hover:bg-white/10 hover:text-white">{playback.muted ? <VolumeX /> : <Volume2 />}</Button><input aria-label="音量" type="range" min="0" max="100" value={playback.volume} onChange={(event) => void ktv.playback({ volume: Number(event.target.value) })} /><span>{playback.volume}</span></div>
-        <div className="stage-next"><ListMusic /><span>下一首</span><strong>{ktv.snapshot.queue[0]?.title || "暂无"}</strong></div>
-      </footer>
+    <main className={`stage-page stage-clean ${playback.mediaType === "mv" ? "stage-has-mv" : "stage-audio"}`}>
+      <video
+        ref={mediaRef}
+        className="stage-media"
+        preload="auto"
+        playsInline
+        onLoadedMetadata={(event) => {
+          const start = Math.min(playback.positionSeconds || 0, event.currentTarget.duration || 0);
+          event.currentTarget.currentTime = start;
+          setPosition(start);
+        }}
+        onTimeUpdate={(event) => syncPosition(event.currentTarget.currentTime)}
+        onEnded={() => void ktv.next().catch(() => undefined)}
+      />
+      {lyrics.length > 0 && <>
+        <div className="stage-vignette" />
+        <section className="stage-content" aria-label="同步歌词">
+          <LyricsDisplayHost pluginId={lyricDocument?.displayPlugin || "traditional"} lines={lyrics} position={position} scoringNotes={scoringNotes} pitchSamples={pitchSamples} />
+        </section>
+      </>}
+      {!playback.songId && <section className="stage-content" aria-label="等待点歌"><div className="stage-empty"><Mic2 /><h1>等待点歌</h1></div></section>}
     </main>
   );
 }

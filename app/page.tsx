@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Captions, ChevronDown, ChevronUp, CircleAlert, Clock3, ListMusic, Mic2, MonitorPlay, Music2, Pause, Play, Plus, Search, SkipForward, Sparkles, Trash2, Video, Volume2, VolumeX, X, Zap } from "lucide-react";
+import type { CSSProperties } from "react";
+import { ArrowRight, ArrowUpToLine, Captions, CircleAlert, Clock3, Flame, Globe2, ListMusic, Mic2, MonitorPlay, Music2, Pause, Play, Plus, RotateCcw, Search, SkipForward, Sparkles, Trash2, Trophy, UserRound, Video, Volume1, Volume2, VolumeX, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DocumentLink } from "@/components/document-link";
 import { Input } from "@/components/ui/input";
 import { useKtv } from "@/hooks/use-ktv";
 
@@ -10,8 +12,9 @@ type WebMcpTool = { name: string; title: string; description: string; inputSchem
 declare global { interface Document { readonly modelContext?: { registerTool: (tool: WebMcpTool, options?: { signal?: AbortSignal }) => void | Promise<void> } } }
 
 const categories = ["全部", "国语", "粤语", "英语", "日语", "系统"];
-const tones = ["violet", "cyan", "orange", "pink", "blue", "green", "rose", "amber"];
-const duration = (seconds?: number | null) => seconds ? `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}` : "--:--";
+const duration = (seconds?: number | null) => Number.isFinite(seconds) && Number(seconds) >= 0
+  ? `${String(Math.floor(Number(seconds) / 60)).padStart(2, "0")}:${String(Math.floor(Number(seconds) % 60)).padStart(2, "0")}`
+  : "--:--";
 
 export default function Home() {
   const ktv = useKtv();
@@ -19,22 +22,21 @@ export default function Home() {
   const [category, setCategory] = useState("全部");
   const [queueOpen, setQueueOpen] = useState(false);
   const [notice, setNotice] = useState("");
-  const filtered = useMemo(() => ktv.songs, [ktv.songs]);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const categoriesRef = useRef<HTMLElement>(null);
   const songsRef = useRef(ktv.songs);
+  const { enqueue, loadSongs } = ktv;
 
   useEffect(() => { songsRef.current = ktv.songs; }, [ktv.songs]);
-
   useEffect(() => {
-    const timer = window.setTimeout(() => void ktv.loadSongs(query, category === "全部" ? "" : category), 180);
+    const timer = window.setTimeout(() => void loadSongs(query, category === "全部" ? "" : category), 180);
     return () => window.clearTimeout(timer);
-  }, [query, category, ktv.loadSongs]);
-
+  }, [query, category, loadSongs]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 1800);
     return () => window.clearTimeout(timer);
   }, [notice]);
-
   useEffect(() => {
     const context = document.modelContext;
     if (!context?.registerTool) return;
@@ -57,61 +59,91 @@ export default function Home() {
       execute(input) {
         const songId = typeof input === "object" && input && "songId" in input ? Number(input.songId) : NaN;
         if (!songsRef.current.some((song) => song.id === songId)) throw new Error("歌曲不存在");
-        return ktv.enqueue(songId).then(() => ({ status: "queued", songId }));
+        return enqueue(songId).then(() => ({ status: "queued", songId }));
       },
     });
     return () => lifecycle.abort();
-  }, [ktv.enqueue]);
+  }, [enqueue]);
 
   const playback = ktv.snapshot.playback;
+  const progress = playback.durationSeconds ? Math.min(100, Math.max(0, (playback.positionSeconds / playback.durationSeconds) * 100)) : 0;
+  const isPlaying = playback.status === "playing";
+  const artists = useMemo(() => Array.from(new Map(ktv.songs.map((song) => [song.artist, song])).values()).slice(0, 8), [ktv.songs]);
+
   const add = async (id: number, title: string, priority = false) => {
     await ktv.enqueue(id, priority);
-    setNotice(`《${title}》已${priority ? "置顶" : "加入歌单"}`);
+    setNotice(`《${title}》已${priority ? "优先加入" : "加入歌单"}`);
   };
+  const showAll = () => { setQuery(""); setCategory("全部"); };
+  const focusSearch = () => { searchRef.current?.focus(); };
+  const showLanguages = () => categoriesRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
 
   return (
-    <main className="min-h-screen bg-[#080a10] text-white">
-      <div className="ambient ambient-one" /><div className="ambient ambient-two" />
-      <header className="relative z-20 flex min-h-[72px] items-center justify-between gap-3 border-b border-white/8 px-4 py-3 sm:px-7">
-        <div className="flex items-center gap-3"><div className="brand-mark"><Mic2 className="size-5" /></div><div><p className="text-[17px] font-bold tracking-tight">OpenKTV</p><p className="text-xs text-white/38">单实例 · 全局歌单</p></div></div>
-        <nav className="hidden items-center gap-1 md:flex"><a className="nav-link nav-link-active" href="/"><ListMusic />点歌台</a><a className="nav-link" href="/player"><MonitorPlay />大屏播放</a></nav>
+    <main className="request-page">
+      <header className="request-header">
+        <div className="request-brand"><div className="brand-mark"><Mic2 /></div><div><strong>OpenKTV</strong><span>点一首，把气氛唱热</span></div></div>
+        <label className="request-search"><Search /><Input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜歌名、歌手" />{query && <button aria-label="清空搜索" onClick={() => setQuery("")}><X /></button>}</label>
+        <nav className="request-nav"><DocumentLink className="request-nav-active" href="/"><Music2 />点歌</DocumentLink><DocumentLink href="/player"><MonitorPlay />大屏播放</DocumentLink></nav>
         <div className={`status-pill ${ktv.connected ? "status-online" : "status-offline"}`}><span />{ktv.connected ? "后端已连接" : "等待后端"}</div>
-        <Button variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white lg:hidden" onClick={() => setQueueOpen(true)}><ListMusic /> {ktv.snapshot.queue.length}</Button>
+        <button className="mobile-queue-button" onClick={() => setQueueOpen(true)}><ListMusic />{ktv.snapshot.queue.length}</button>
       </header>
 
-      {ktv.error && <div className="relative z-20 mx-4 mt-4 flex items-center gap-2 rounded-xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100 sm:mx-7"><CircleAlert className="size-4" />{ktv.error}。请确认本地后端已启动。</div>}
+      {ktv.error && <div className="request-error"><CircleAlert />{ktv.error}。请确认本地后端已启动。</div>}
 
-      <div className="relative z-10 grid min-h-[calc(100vh-72px)] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_370px]">
-        <section className="min-w-0 px-4 py-6 sm:px-7 lg:px-9">
-          <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div><div className="mb-2 flex items-center gap-2 text-sm font-semibold text-fuchsia-300"><Sparkles className="size-4" /> 本地曲库</div><h1 className="text-3xl font-black tracking-[-0.04em] sm:text-4xl">点一首，把气氛唱热</h1></div>
-            <label className="relative block w-full xl:w-[360px]"><span className="sr-only">搜索歌名或歌手</span><Search className="absolute left-4 top-1/2 z-10 size-5 -translate-y-1/2 text-white/35" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索歌名、歌手" className="h-12 rounded-2xl border-white/10 bg-white/[0.055] pl-12 pr-10 text-base text-white shadow-none placeholder:text-white/30 focus-visible:border-fuchsia-300/50 focus-visible:ring-fuchsia-400/15" />{query && <button aria-label="清空搜索" onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-white/45 hover:bg-white/10 hover:text-white"><X className="size-4" /></button>}</label>
+      <div className="request-layout">
+        <section className="request-content">
+          <div className="request-hero" role="img" aria-label="唱出更好的自己" />
+
+          <div className="discovery-grid" aria-label="点歌方式">
+            <button onClick={showAll} style={{ backgroundImage: "url('/assets/ktv-design/discover-hot.png')" }}><span><Flame />热门推荐<small>大家都在唱的歌</small></span><ArrowRight /></button>
+            <button onClick={focusSearch} style={{ backgroundImage: "url('/assets/ktv-design/discover-singer.png')" }}><span><UserRound />歌手点歌<small>找你喜欢的歌手</small></span><ArrowRight /></button>
+            <button onClick={showAll} style={{ backgroundImage: "url('/assets/ktv-design/discover-ranking.png')" }}><span><Trophy />排行榜<small>热门金曲等你来唱</small></span><ArrowRight /></button>
+            <button onClick={showLanguages} style={{ backgroundImage: "url('/assets/ktv-design/discover-language.png')" }}><span><Globe2 />语种<small>中文 / 粤语 / 英语 / 日语</small></span><ArrowRight /></button>
           </div>
-          <nav aria-label="歌曲分类" className="scrollbar-none mb-6 flex gap-2 overflow-x-auto pb-1">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`shrink-0 rounded-full px-4 py-2.5 text-sm font-semibold transition ${category === item ? "bg-white text-black" : "border border-white/8 bg-white/[0.035] text-white/55 hover:bg-white/8 hover:text-white"}`}>{item}</button>)}</nav>
-          <div className="mb-4 flex items-center justify-between"><h2 className="flex items-center gap-2 text-lg font-bold"><Music2 className="size-5 text-cyan-300" /> 可点歌曲</h2><span className="text-sm text-white/38">{filtered.length} 首</span></div>
 
-          {filtered.length ? <div className="song-grid">{filtered.map((song, index) => (
-            <article key={song.id} className="song-card group">
-              <button className={`cover cover-${tones[song.id % tones.length]}`} onClick={() => song.playable && void ktv.playSong(song.id)} aria-label={`播放 ${song.title}`} disabled={!song.playable}><span className="cover-lines" /><span className="cover-index">{String(index + 1).padStart(2, "0")}</span><span className="cover-play"><Play className="size-5 fill-current" /></span></button>
-              <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h3 className="truncate font-bold">{song.title}</h3>{song.playable ? <span className={`media-ready ${song.mediaType === "mv" ? "media-mv" : ""}`}>{song.mediaType === "mv" && <Video />}{song.mediaType === "mv" ? "MV" : "可播放"}</span> : <span className="media-missing">缺少媒体</span>}{song.hasLyrics && <span className="media-lyric" title="含同步歌词"><Captions /></span>}</div><p className="mt-1 truncate text-sm text-white/42">{song.artist} · {song.language} · {duration(song.durationSeconds)}</p></div>
-              <Button title="置顶" onClick={() => void add(song.id, song.title, true)} size="icon" variant="ghost" className="rounded-xl text-white/35 hover:bg-white/8 hover:text-cyan-200"><Zap /><span className="sr-only">置顶</span></Button>
-              <Button onClick={() => void add(song.id, song.title)} size="icon" className="rounded-xl bg-white/9 text-white hover:bg-fuchsia-500"><Plus /><span className="sr-only">加入歌单</span></Button>
-            </article>
-          ))}</div> : <div className="flex min-h-56 flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/[0.025] text-center"><Search className="mb-3 size-8 text-white/25" /><p className="font-semibold">没有找到这首歌</p><p className="mt-1 text-sm text-white/40">换个歌名或歌手试试</p></div>}
+          <section className="artist-strip" aria-labelledby="artist-heading">
+            <div className="section-heading"><div><Flame /><h2 id="artist-heading">热门歌手</h2></div><span>{artists.length} 位</span></div>
+            <div className="artist-list">
+              {artists.map((song) => <button key={song.artist} onClick={() => setQuery(song.artist)} className={query === song.artist ? "artist-active" : ""}><img src={song.coverUrl || "/assets/ktv-design/discover-singer.png"} alt="" /><span>{song.artist}</span></button>)}
+              {!artists.length && <p>曲库中还没有歌手信息</p>}
+            </div>
+          </section>
+
+          <nav ref={categoriesRef} aria-label="歌曲分类" className="request-categories">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={category === item ? "category-active" : ""}>{item}</button>)}</nav>
+
+          <section className="song-browser" aria-labelledby="song-heading">
+            <div className="section-heading"><div><Music2 /><h2 id="song-heading">大家都在唱</h2></div><span>{ktv.songs.length} 首</span></div>
+            {ktv.songs.length ? <div className="request-song-grid">{ktv.songs.map((song) => (
+              <article key={song.id} className="request-song-row">
+                <button className="song-cover-button" onClick={() => song.playable && void ktv.playSong(song.id)} disabled={!song.playable} aria-label={`播放 ${song.title}`}><img src={song.coverUrl || "/assets/ktv-design/discover-hot.png"} alt="" /><span><Play /></span></button>
+                <div className="request-song-info"><div><h3>{song.title}</h3>{song.mediaType === "mv" && <span className="media-mv"><Video />MV</span>}{song.hasLyrics && <span className="media-lyric"><Captions /></span>}</div><p>{song.artist} · {song.language} · {duration(song.durationSeconds)}</p></div>
+                <Button disabled={!song.playable} onClick={() => void add(song.id, song.title)} className="request-song-button"><Plus />点歌</Button>
+              </article>
+            ))}</div> : <div className="request-empty"><Search /><strong>没有找到歌曲</strong><span>换个歌名、歌手或分类试试</span></div>}
+          </section>
         </section>
 
-        <aside className={`queue-panel ${queueOpen ? "queue-panel-open" : ""}`}>
-          <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-fuchsia-300/75">Global queue</p><h2 className="mt-1 text-xl font-bold">已点歌单 <span className="text-white/32">{ktv.snapshot.queue.length}</span></h2></div><Button size="icon" variant="ghost" className="text-white hover:bg-white/10 hover:text-white lg:hidden" onClick={() => setQueueOpen(false)}><X /><span className="sr-only">关闭歌单</span></Button></div>
-          <div className="mt-6 flex-1 space-y-2 overflow-y-auto pr-1">{ktv.snapshot.queue.length ? ktv.snapshot.queue.map((song, index) => (
-            <div key={song.queueId} className="queue-item"><span className="w-5 text-center text-xs font-bold text-white/25">{index + 1}</span><div className={`mini-cover cover-${tones[song.id % tones.length]}`}><Music2 className="size-4" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{song.title}</p><p className="mt-0.5 truncate text-xs text-white/36">{song.artist}</p></div><div className="queue-actions"><button aria-label="上移" disabled={index === 0} onClick={() => void ktv.move(song.queueId, "up")}><ChevronUp /></button><button aria-label="下移" disabled={index === ktv.snapshot.queue.length - 1} onClick={() => void ktv.move(song.queueId, "down")}><ChevronDown /></button><button aria-label="移除" onClick={() => void ktv.remove(song.queueId)}><Trash2 /></button></div></div>
-          )) : <div className="py-12 text-center text-sm text-white/38"><ListMusic className="mx-auto mb-3 size-8 opacity-50" />歌单还是空的</div>}</div>
-          <a href="/player" className="mt-5 flex items-center justify-center gap-2 rounded-2xl border border-fuchsia-300/20 bg-fuchsia-400/10 p-3 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-400/15"><MonitorPlay className="size-4" />打开大屏播放</a>
+        <aside className={`request-queue ${queueOpen ? "request-queue-open" : ""}`}>
+          <div className="queue-heading"><div><Music2 /><h2>已点 <b>{ktv.snapshot.queue.length}</b> 首</h2></div><button className="queue-close" aria-label="关闭歌单" onClick={() => setQueueOpen(false)}><X /></button></div>
+          <div className="request-queue-list">{ktv.snapshot.queue.length ? ktv.snapshot.queue.map((song, index) => (
+            <article key={song.queueId} className="request-queue-item">
+              <span className="queue-index">{String(index + 1).padStart(2, "0")}</span><img src={song.coverUrl || "/assets/ktv-design/discover-hot.png"} alt="" />
+              <div><strong>{song.title}</strong><span>{song.artist}</span></div>
+              <button className="queue-top" disabled={index === 0} onClick={() => void ktv.move(song.queueId, "top")}><ArrowUpToLine />置顶</button>
+              <button className="queue-delete" onClick={() => void ktv.remove(song.queueId)}><Trash2 />删除</button>
+            </article>
+          )) : <div className="queue-empty"><ListMusic /><strong>歌单还是空的</strong><span>点几首喜欢的歌吧</span></div>}</div>
+          <DocumentLink href="/player" className="queue-screen-link"><MonitorPlay />打开大屏播放</DocumentLink>
         </aside>
-        {queueOpen && <button aria-label="关闭歌单遮罩" onClick={() => setQueueOpen(false)} className="fixed inset-0 z-30 bg-black/70 lg:hidden" />}
+        {queueOpen && <button aria-label="关闭歌单遮罩" onClick={() => setQueueOpen(false)} className="queue-backdrop" />}
       </div>
 
-      <section className="player" aria-label="播放控制"><div className={`player-art cover-${tones[(playback.songId || 0) % tones.length]}`}><Mic2 className="size-6" /></div><div className="min-w-0 sm:w-52"><div className="flex items-center gap-2"><span className="playing-dot" /><p className="truncate text-sm font-bold">{playback.title || "等待点歌"}</p></div><p className="mt-0.5 truncate text-xs text-white/38">{playback.artist || "OpenKTV"}</p></div><div className="hidden min-w-0 flex-1 px-4 text-center text-sm text-white/50 md:block">{playback.playable ? "媒体已就绪，前往大屏播放" : "当前歌曲缺少本地媒体"}</div><div className="ml-auto flex items-center gap-1 sm:gap-2"><Button variant="ghost" size="icon" onClick={() => void ktv.playback({ muted: !playback.muted })} className="hidden rounded-full text-white/55 hover:bg-white/10 hover:text-white sm:inline-flex">{playback.muted ? <VolumeX /> : <Volume2 />}<span className="sr-only">静音</span></Button><Button size="icon-lg" onClick={() => void ktv.playback({ status: playback.status === "playing" ? "paused" : "playing" })} className="rounded-full bg-white text-black hover:bg-fuchsia-200">{playback.status === "playing" ? <Pause className="fill-current" /> : <Play className="ml-0.5 fill-current" />}<span className="sr-only">播放或暂停</span></Button><Button variant="ghost" size="icon" onClick={() => void ktv.next()} className="rounded-full text-white hover:bg-white/10 hover:text-white"><SkipForward /><span className="sr-only">下一首</span></Button><div className="hidden items-center gap-1 rounded-lg bg-white/5 px-2.5 py-2 text-xs text-white/45 sm:flex"><Clock3 className="size-3.5" /> {ktv.snapshot.queue.length * 4} 分钟</div></div></section>
-      {notice && <div role="status" className="toast">{notice}</div>}
+      <section className="player-console" aria-label="播放控制">
+        <div className="player-now"><img className="player-art-image" src={ktv.songs.find((song) => song.id === playback.songId)?.coverUrl || "/assets/ktv-design/discover-hot.png"} alt="" /><div className="min-w-0"><div className="flex items-center gap-2"><span className={`playing-dot ${isPlaying ? "" : "playing-dot-paused"}`} /><p className="truncate font-bold">{playback.title || "等待点歌"}</p></div><p className="mt-1 truncate text-xs text-white/38">{playback.artist || "OpenKTV"}</p></div></div>
+        <div className="player-transport"><div className="transport-buttons"><button title="重唱" disabled={!playback.songId} onClick={() => void ktv.playback({ positionSeconds: 0, status: "playing" })}><RotateCcw /><span>重唱</span></button><button className="transport-primary" disabled={!playback.songId || !playback.playable} onClick={() => void ktv.playback({ status: isPlaying ? "paused" : "playing" })}>{isPlaying ? <Pause className="fill-current" /> : <Play className="fill-current" />}<span>{isPlaying ? "暂停" : "播放"}</span></button><button title="切歌" disabled={!playback.songId && !ktv.snapshot.queue.length} onClick={() => void ktv.next()}><SkipForward /><span>切歌</span></button></div><div className="player-timeline"><span>{duration(playback.positionSeconds)}</span><input aria-label="播放进度" type="range" min="0" max={Math.max(1, playback.durationSeconds || 0)} step="1" value={Math.min(playback.positionSeconds, playback.durationSeconds || 1)} onChange={(event) => void ktv.playback({ positionSeconds: Number(event.target.value) })} style={{ "--progress": `${progress}%` } as CSSProperties} disabled={!playback.songId} /><span>{duration(playback.durationSeconds)}</span></div></div>
+        <div className="player-volume"><button aria-label={playback.muted ? "取消静音" : "静音"} onClick={() => void ktv.playback({ muted: !playback.muted })}>{playback.muted ? <VolumeX /> : playback.volume < 50 ? <Volume1 /> : <Volume2 />}</button><input aria-label="音量" type="range" min="0" max="100" value={playback.muted ? 0 : playback.volume} onChange={(event) => void ktv.playback({ volume: Number(event.target.value), muted: false })} style={{ "--volume": `${playback.muted ? 0 : playback.volume}%` } as CSSProperties} /><span>{playback.muted ? 0 : playback.volume}</span><div className="queue-eta"><Clock3 />{ktv.snapshot.queue.length ? `约 ${ktv.snapshot.queue.length * 4} 分钟` : "歌单为空"}</div></div>
+      </section>
+      {notice && <div role="status" className="toast"><Sparkles />{notice}</div>}
     </main>
   );
 }

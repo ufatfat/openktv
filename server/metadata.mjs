@@ -8,6 +8,39 @@ function normalize(value = "") {
     .replace(/[\s\p{P}\p{S}]+/gu, "");
 }
 
+const MV_BRACKET_MARKERS = [
+  "mv", "official", "official mv", "official video", "official music video",
+  "music video", "video", "lyric video", "lyrics video", "visualizer",
+  "4k", "8k", "hd", "full hd", "高清", "超清", "官方mv", "官方 mv",
+  "官方音乐录像带", "官方音乐录影带", "官方版", "完整版", "中字", "中文字幕",
+];
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const mvBracketPattern = new RegExp(
+  `[\\[【（(]\\s*(?:${MV_BRACKET_MARKERS.map(escapeRegExp).join("|")}|\\d{3,4}p)\\s*[\\]】）)]`,
+  "giu",
+);
+
+const mvSuffixPattern = new RegExp(
+  `(?:\\s*[-–—|·]\\s*|\\s+)(?:${MV_BRACKET_MARKERS.map(escapeRegExp).join("|")}|\\d{3,4}p)\\s*$`,
+  "giu",
+);
+
+export function cleanMediaTitle(value = "", mediaType = "audio") {
+  let title = String(value).normalize("NFKC").trim();
+  if (mediaType !== "mv") return title;
+  title = title.replace(mvBracketPattern, " ");
+  let previous;
+  do {
+    previous = title;
+    title = title.replace(mvSuffixPattern, " ").trim();
+  } while (title !== previous);
+  return title.replace(/[\s_-]+$/g, "").replace(/\s+/g, " ").trim();
+}
+
 function bigrams(value) {
   const text = normalize(value);
   if (text.length < 2) return text ? [text] : [];
@@ -31,13 +64,15 @@ export function similarity(left, right) {
 }
 
 export function scoreCandidate(song, candidate) {
-  const title = similarity(song.title, candidate.title);
+  const title = similarity(cleanMediaTitle(song.title, song.mediaType), cleanMediaTitle(candidate.title, song.mediaType));
   const artist = song.artist && song.artist !== "未知歌手" ? similarity(song.artist, candidate.artist) : 0.72;
   const album = song.album ? similarity(song.album, candidate.album) : 0.65;
   const localDuration = Number(song.durationSeconds) || 0;
   const remoteDuration = Number(candidate.durationSeconds) || 0;
   const duration = localDuration && remoteDuration ? Math.max(0, 1 - Math.abs(localDuration - remoteDuration) / Math.max(localDuration, remoteDuration, 1)) : 0.65;
-  const total = title * 0.55 + artist * 0.25 + album * 0.05 + duration * 0.15;
+  const total = song.mediaType === "mv"
+    ? title * 0.6 + artist * 0.3 + album * 0.05 + duration * 0.05
+    : title * 0.55 + artist * 0.25 + album * 0.05 + duration * 0.15;
   return { total: Number(total.toFixed(3)), title, artist, album, duration };
 }
 
@@ -73,7 +108,8 @@ export class MusicMetadataScraper {
 
   async searchMusicBrainz(song) {
     await this.rateLimitMusicBrainz();
-    const terms = [`recording:"${song.title.replaceAll('"', "")}"`];
+    const title = cleanMediaTitle(song.title, song.mediaType) || song.title;
+    const terms = [`recording:"${title.replaceAll('"', "")}"`];
     if (song.artist && song.artist !== "未知歌手") terms.push(`artist:"${song.artist.replaceAll('"', "")}"`);
     const url = new URL("https://musicbrainz.org/ws/2/recording/");
     url.searchParams.set("query", terms.join(" AND "));
